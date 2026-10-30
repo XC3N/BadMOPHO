@@ -1,0 +1,13 @@
+{
+  "repo": "https://github.com/XC3N/webtools",
+  "commit": "1d34c992cdd2e377239c3ab922fe0cc6c29b10a6",
+  "date": "2026-10-30",
+  "files": [
+    "common/controls.css",
+    "common/controls.js",
+    "common/theme.css",
+    "common/theme.js",
+    "common/util.js",
+    "common/README.md"
+  ]
+}
