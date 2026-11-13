@@ -6,7 +6,9 @@
 <title>Bad MOPHO</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- Web fonts load without blocking the first paint: a slow or blocked fonts.googleapis.com used to hold the
+     whole page blank until it answered. Fallback fonts show first, then swap in. -->
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root{
     --bg:#0c0c0e;--panel:#16161a;--panel-2:#1c1c21;--edge:#2a2a31;--edge-2:#34343c;
@@ -807,7 +809,7 @@
 /* @include common/util.js */
 /* @include common/controls.js */
 /* @include common/theme.js */
-const APP_VERSION='0.9.204', APP_BUILD='2026-06-09';   // bump on each release; shown in header for cache checks
+const APP_VERSION='0.9.205', APP_BUILD='2026-11-12';   // bump on each release; shown in header for cache checks
 /* ---- preferences: persisted to localStorage, all access guarded so a blocked store just disables persistence ---- */
 const PREFS_KEY='mopho-programmer-prefs';
 function readPrefs(){ return Prefs.json(PREFS_KEY,{}); }
@@ -1722,6 +1724,7 @@ function restoreDevices(){
 }
 function initMIDI(){
   if(!navigator.requestMIDIAccess){statusTxt.textContent='Web MIDI unsupported';flash("WEB MIDI N/A","use Chrome or Edge");return;}
+  statusTxt.textContent='connecting MIDI…';
   const onAcc=acc=>{
     midiAccess=acc;refreshOutputs();refreshInputs();statusTxt.textContent='select output';
     acc.onstatechange=()=>{refreshOutputs();refreshInputs();};
@@ -3822,7 +3825,10 @@ function initCollapsibles(){
 initCollapsibles();
 buildSectionNav();
 
-initMIDI();
+// Start Web MIDI only after the editor has painted. Chrome's MIDI startup (device enumeration, the SysEx
+// permission check) can stall for seconds on some Windows setups; deferring it means the page is already
+// on screen and usable while that happens, instead of opening to a frozen blank tab.
+requestAnimationFrame(()=>setTimeout(initMIDI,50));
 })();
 </script>
 </body>
