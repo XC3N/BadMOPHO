@@ -447,7 +447,10 @@
   .gfx svg{width:100%;height:240px;display:block;background:var(--bg);border:1px solid var(--edge);border-radius:3px}
   .gfx .axis{stroke:#26262c;stroke-width:1}
   .gfx .fill{fill:rgba(var(--env-rgb),.10)}.gfx .line{fill:none;stroke:var(--env);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;filter:none}
-  .gfx .handle{fill:#1c1c21;stroke:var(--env);stroke-width:2;cursor:grab}
+  .gfx .handle{fill:#1c1c21;stroke:var(--env);stroke-width:1.5;vector-effect:non-scaling-stroke;pointer-events:none;transition:fill .1s}
+  .gfx .hhit{fill:transparent;stroke:none;cursor:grab;pointer-events:all}   /* invisible, larger grab area around each small handle */
+  .gfx .hgrp:hover .handle,.gfx .hgrp.drag .handle{fill:var(--env)}
+  .gfx .hgrp.drag .hhit{cursor:grabbing}
   .gfx.env-f{--env:var(--env-f);--env-rgb:var(--env-f-rgb)}   /* Filter envelope — accent2 −20° */
   .gfx.env-a{--env:var(--env-a);--env-rgb:var(--env-a-rgb)}   /* Amplifier (VCA) envelope — accent2 */
   .gfx.env-3{--env:var(--env-3);--env-rgb:var(--env-3-rgb)}   /* Env 3 (assignable) — accent2 +20° */
@@ -809,7 +812,7 @@
 /* @include common/util.js */
 /* @include common/controls.js */
 /* @include common/theme.js */
-const APP_VERSION='0.9.206', APP_BUILD='2026-11-13';   // bump on each release; shown in header for cache checks
+const APP_VERSION='0.9.207', APP_BUILD='2026-11-13';   // bump on each release; shown in header for cache checks
 /* ---- startup trace: timestamps of each startup step plus any moment the page's main thread stopped responding.
    The monitor's Copy button puts it at the top of the copied log, so a slow start can be diagnosed from a paste.
    URL switches for narrowing a slow start down: ?nomidi skips Web MIDI entirely, ?noscan skips the automatic name scan. ---- */
@@ -2638,17 +2641,29 @@ function mini(t){return el('div','minilabel',t);}
 
 /* envelope (DADSR) — draggable, shared component */
 function envelope(cfg){ // cfg:{blue,delay,atk,dec,sus,rel}
-  const VBW=320,VBH=140,X0=10,BASE=120,TOP=20,SEG=52,SUSW=46,HR=6;
+  const VBW=320,VBH=140,X0=10,BASE=120,TOP=20,SEG=52,SUSW=46,
+        HR_PX=4.5,HIT_PX=13;   // visible handle / grab radius in SCREEN pixels (the svg is stretched with preserveAspectRatio=none, so these are converted per axis)
   const w=el('div','gfx '+(cfg.tri?'env-3':cfg.blue?'env-a':'env-f'));
   const gname=cfg.tri?'Env 3':cfg.blue?'VCA Envelope':'Filter Envelope';
   w.innerHTML=`<div class="gfx-hd"><span class="gfx-tri"></span>${gname}</div><svg viewBox="0 0 ${VBW} ${VBH}" preserveAspectRatio="none">
     <line class="axis" x1="${X0}" y1="${BASE}" x2="${VBW-6}" y2="${BASE}"/>
     <path class="fill"/><path class="line"/>
-    <circle class="handle" data-h="delay" r="${HR}"/><circle class="handle" data-h="atk" r="${HR}"/>
-    <circle class="handle" data-h="ds" r="${HR}"/><circle class="handle" data-h="rel" r="${HR}"/></svg>`;
+    ${['delay','atk','ds','rel'].map(k=>`<g class="hgrp" data-h="${k}"><ellipse class="handle"/><ellipse class="hhit"/></g>`).join('')}</svg>`;
   w.querySelector('.gfx-hd').addEventListener('click',()=>w.classList.toggle('collapsed'));
   const svg=w.querySelector('svg'),fill=w.querySelector('.fill'),line=w.querySelector('.line');
   const H={delay:w.querySelector('[data-h=delay]'),atk:w.querySelector('[data-h=atk]'),ds:w.querySelector('[data-h=ds]'),rel:w.querySelector('[data-h=rel]')};
+  const setXY=(g,x,y)=>g.querySelectorAll('ellipse').forEach(e=>{e.setAttribute('cx',x);e.setAttribute('cy',y);});
+  function sizeHandles(){   // keep handles round and a fixed pixel size however wide the panel is
+    const r=svg.getBoundingClientRect();if(!r.width||!r.height)return;
+    const sx=VBW/r.width,sy=VBH/r.height;
+    Object.values(H).forEach(g=>{
+      const v=g.querySelector('.handle'),h=g.querySelector('.hhit');
+      v.setAttribute('rx',HR_PX*sx);v.setAttribute('ry',HR_PX*sy);
+      h.setAttribute('rx',HIT_PX*sx);h.setAttribute('ry',HIT_PX*sy);
+    });
+  }
+  sizeHandles();
+  if(window.ResizeObserver) new ResizeObserver(sizeHandles).observe(svg); else window.addEventListener('resize',sizeHandles);
   function geom(){
     const d=state[cfg.delay]/127*SEG,a=state[cfg.atk]/127*SEG,dc=state[cfg.dec]/127*SEG,r=state[cfg.rel]/127*SEG,
           sy=BASE-(state[cfg.sus]/127)*(BASE-TOP);
@@ -2658,15 +2673,12 @@ function envelope(cfg){ // cfg:{blue,delay,atk,dec,sus,rel}
   function draw(){
     const g=geom(),d=`M${g.p0.x} ${g.p0.y} L${g.p1.x} ${g.p1.y} L${g.p2.x} ${g.p2.y} L${g.p3.x} ${g.p3.y} L${g.p4.x} ${g.p4.y} L${g.p5.x} ${g.p5.y}`;
     line.setAttribute('d',d);fill.setAttribute('d',d+` L${g.p5.x} ${BASE} L${X0} ${BASE} Z`);
-    H.delay.setAttribute('cx',g.p1.x);H.delay.setAttribute('cy',g.p1.y);
-    H.atk.setAttribute('cx',g.p2.x);H.atk.setAttribute('cy',g.p2.y);
-    H.ds.setAttribute('cx',g.p3.x);H.ds.setAttribute('cy',g.p3.y);
-    H.rel.setAttribute('cx',g.p5.x);H.rel.setAttribute('cy',g.p5.y);
+    setXY(H.delay,g.p1.x,g.p1.y);setXY(H.atk,g.p2.x,g.p2.y);setXY(H.ds,g.p3.x,g.p3.y);setXY(H.rel,g.p5.x,g.p5.y);
   }
   draw();[cfg.delay,cfg.atk,cfg.dec,cfg.sus,cfg.rel].forEach(id=>onChange(id,draw));
   let active=null;
   const toVB=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left)*(VBW/r.width),y:(e.clientY-r.top)*(VBH/r.height)};};
-  Object.entries(H).forEach(([k,h])=>h.addEventListener('pointerdown',e=>{if(e.button!==0)return;active=k;h.setPointerCapture(e.pointerId);e.preventDefault();}));
+  Object.entries(H).forEach(([k,h])=>h.addEventListener('pointerdown',e=>{if(e.button!==0)return;active=k;h.classList.add('drag');h.setPointerCapture(e.pointerId);e.preventDefault();}));
   svg.addEventListener('pointermove',e=>{
     if(!active)return;const m=toVB(e);
     const d=state[cfg.delay]/127*SEG,a=state[cfg.atk]/127*SEG,dc=state[cfg.dec]/127*SEG;
@@ -2675,7 +2687,8 @@ function envelope(cfg){ // cfg:{blue,delay,atk,dec,sus,rel}
     else if(active==='ds'){setParam(cfg.dec,(m.x-(X0+d+a))/SEG*127);setParam(cfg.sus,(BASE-m.y)/(BASE-TOP)*127);}
     else if(active==='rel')setParam(cfg.rel,(m.x-(X0+d+a+dc+SUSW))/SEG*127);
   });
-  svg.addEventListener('pointerup',()=>active=null);svg.addEventListener('pointerleave',()=>active=null);
+  const release=()=>{active=null;Object.values(H).forEach(g=>g.classList.remove('drag'));};
+  svg.addEventListener('pointerup',release);svg.addEventListener('pointerleave',release);
   return w;
 }
 
