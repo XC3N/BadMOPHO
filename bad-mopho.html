@@ -62,6 +62,7 @@
   .nameinp:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 1px var(--amber)}
   .nameinp::placeholder{color:var(--faint);text-shadow:none}
   .status{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);font-family:"JetBrains Mono"}
+  #statusTxt.clickable{cursor:pointer;text-decoration:underline dotted;color:var(--ink)}
   .dot{width:9px;height:9px;border-radius:50%;background:#5a2a2a;transition:.3s}
   .dot.pending{background:#c79a3a;box-shadow:none}
   .dot.on{background:#37d67a;box-shadow:none}
@@ -812,20 +813,27 @@
 /* @include common/util.js */
 /* @include common/controls.js */
 /* @include common/theme.js */
-const APP_VERSION='0.9.207', APP_BUILD='2026-11-13';   // bump on each release; shown in header for cache checks
+const APP_VERSION='0.9.208', APP_BUILD='2026-11-24';   // bump on each release; shown in header for cache checks
 /* ---- startup trace: timestamps of each startup step plus any moment the page's main thread stopped responding.
    The monitor's Copy button puts it at the top of the copied log, so a slow start can be diagnosed from a paste.
-   URL switches for narrowing a slow start down: ?nomidi skips Web MIDI entirely, ?noscan skips the automatic name scan. ---- */
+   URL switches for narrowing a slow start down: ?nomidi skips Web MIDI entirely, ?noscan skips the automatic name scan,
+   ?midi forces Web MIDI to start on load even after a stuck start.
+   The trace is also saved to localStorage as it grows, so a start that froze the tab (and was closed) can still be read on the next visit. ---- */
 const BOOT=[], BOOT_FLAGS=new URLSearchParams(location.search);
-const NO_MIDI=BOOT_FLAGS.has('nomidi'), NO_SCAN=BOOT_FLAGS.has('noscan');
-function bootMark(txt){ if(BOOT.length<400) BOOT.push(String(Math.round(performance.now())).padStart(7)+' ms  '+txt); }
+const NO_MIDI=BOOT_FLAGS.has('nomidi'), NO_SCAN=BOOT_FLAGS.has('noscan'), FORCE_MIDI=BOOT_FLAGS.has('midi');
+const BOOT_KEY='mopho-programmer-boot', PREV_BOOT=Prefs.json(BOOT_KEY,null);   // last visit's trace, read before this one overwrites it
+const BOOT_T0=new Date().toISOString().replace('T',' ').slice(0,19)+' UTC';
+function bootMark(txt){ if(BOOT.length>=400) return; BOOT.push(String(Math.round(performance.now())).padStart(7)+' ms  '+txt);
+  Prefs.setJson(BOOT_KEY,{at:BOOT_T0,v:APP_VERSION,lines:BOOT}); }
 bootMark('script start · v'+APP_VERSION+(NO_MIDI?' · nomidi':'')+(NO_SCAN?' · noscan':''));
 { let last=performance.now();   // heartbeat: a late tick means the main thread was blocked for that long
   const hb=setInterval(()=>{ const now=performance.now(), gap=now-last-100; last=now;
     if(gap>200 && !document.hidden) bootMark('!! page stalled '+Math.round(gap)+' ms');
     if(now>180000) clearInterval(hb); },100);
   requestAnimationFrame(()=>bootMark('first frame')); }
-function bootLog(){ return '--- startup trace (v'+APP_VERSION+') ---\n'+BOOT.join('\n')+'\n--- end startup trace ---'; }
+function bootLog(){
+  const prev=PREV_BOOT&&Array.isArray(PREV_BOOT.lines)?'--- previous visit\'s startup trace (v'+PREV_BOOT.v+', '+PREV_BOOT.at+') ---\n'+PREV_BOOT.lines.join('\n')+'\n':'';
+  return prev+'--- startup trace (v'+APP_VERSION+', '+BOOT_T0+') ---\n'+BOOT.join('\n')+'\n--- end startup trace ---'; }
 /* ---- preferences: persisted to localStorage, all access guarded so a blocked store just disables persistence ---- */
 const PREFS_KEY='mopho-programmer-prefs';
 function readPrefs(){ return Prefs.json(PREFS_KEY,{}); }
@@ -1609,6 +1617,7 @@ document.getElementById('reconnectBtn').onclick=()=>{
   flash("RECONNECTED","re-ran handshake · parser reset");
 };
 document.getElementById('refreshMidiBtn').onclick=()=>{
+  if(!midiAccess){ initMIDI(true); return; }   // MIDI paused after a stuck start -> this starts it
   refreshOutputs(); refreshInputs();
   flash("MIDI LIST REFRESHED",(midiAccess?midiAccess.outputs.size:0)+" out · "+(midiAccess?midiAccess.inputs.size:0)+" in");
 };
@@ -1738,10 +1747,43 @@ function restoreDevices(){
   if(prefs.ctrlName && ctrlInSel){ for(const i of midiAccess.inputs.values()) if(i.name===prefs.ctrlName){ ctrlInSel.csSet(i.id); selectCtrlIn(); break; } }
   _mirroring=false;
 }
-function initMIDI(){
+/* Web MIDI start-up. On some Windows setups Chrome's own MIDI layer stalls inside requestMIDIAccess (often a port that
+   another app holds, or a driver that's slow to open) and the whole browser freezes with it; the page can't interrupt that.
+   So: the attempt is recorded in prefs before the call and cleared when Chrome answers. If the last attempt never answered
+   (the tab was closed while frozen) or took longer than MIDI_SLOW_MS, MIDI waits for a click instead of starting on load,
+   so the editor always opens. A fast answer re-enables the automatic start. ?midi forces it. */
+const MIDI_SLOW_MS=4000;
+let midiStarting=false, midiTick=null;
+function midiStartIsRisky(){
+  if(FORCE_MIDI) return '';
+  if(prefs.midiPending) return 'last start never finished';
+  if(prefs.midiStartMs>MIDI_SLOW_MS) return 'last start took '+(prefs.midiStartMs/1000).toFixed(1)+' s';
+  return '';
+}
+function offerMidiStart(why){
+  statusTxt.textContent='MIDI paused · click to connect'; statusTxt.classList.add('clickable');
+  statusTxt.title='Web MIDI did not start automatically ('+why+'). Click to connect. If Chrome freezes, close other MIDI apps (DAW, MIDI-OX, other editors) and replug the interface first.';
+  flash("MIDI PAUSED",why.slice(0,22)); bootMark('MIDI auto-start skipped · '+why);
+}
+statusTxt.addEventListener('click',()=>{ if(!midiAccess && !midiStarting && !NO_MIDI) initMIDI(true); });
+function initMIDI(manual){
   if(!navigator.requestMIDIAccess){statusTxt.textContent='Web MIDI unsupported';flash("WEB MIDI N/A","use Chrome or Edge");return;}
   if(NO_MIDI){statusTxt.textContent='MIDI off (?nomidi)';bootMark('MIDI skipped (?nomidi)');return;}
-  statusTxt.textContent='connecting MIDI…';
+  if(midiAccess||midiStarting) return;
+  if(!manual){ const why=midiStartIsRisky(); if(why){ offerMidiStart(why); return; } }
+  midiStarting=true; statusTxt.classList.remove('clickable'); statusTxt.title='';
+  const t0=performance.now();
+  // a ticking counter: if it keeps counting while Chrome feels frozen, the stall is in Chrome's MIDI layer, not this page
+  const tick=()=>{ const s=Math.floor((performance.now()-t0)/1000); statusTxt.textContent='connecting MIDI…'+(s?' '+s+' s':'');
+    if(s===8) flash("MIDI SLOW","close other MIDI apps"); };
+  tick(); midiTick=setInterval(tick,500);
+  prefs.midiPending=Date.now(); savePrefs();
+  const settled=ok=>{
+    clearInterval(midiTick); midiTick=null; midiStarting=false;
+    const ms=Math.round(performance.now()-t0);
+    delete prefs.midiPending; prefs.midiStartMs=ms; savePrefs();
+    bootMark('requestMIDIAccess answered after '+ms+' ms · '+(ok?'granted':'denied'));
+  };
   const onAcc=acc=>{
     bootMark('MIDI access granted · '+acc.outputs.size+' out · '+acc.inputs.size+' in · sysex '+(sysexOK?'yes':'no'));
     for(const o of acc.outputs.values()) bootMark('  out: '+o.name+' ['+o.state+']');
@@ -1751,13 +1793,14 @@ function initMIDI(){
     restoreDevices();
     bootMark('saved devices restored · out '+(midiOut?midiOut.name:'—')+' · in '+(synthIn?synthIn.name:'—'));
   };
-  bootMark('requestMIDIAccess called');
+  bootMark('requestMIDIAccess called'+(manual?' (click)':''));
   navigator.requestMIDIAccess({sysex:true}).then(acc=>{
-    sysexOK=true;onAcc(acc);flash("WEB MIDI OK","SysEx enabled · select output");
+    settled(true);sysexOK=true;onAcc(acc);flash("WEB MIDI OK","SysEx enabled · select output");
   }).catch(()=>{
+    bootMark('sysex refused · retrying without');
     navigator.requestMIDIAccess({sysex:false}).then(acc=>{
-      sysexOK=false;onAcc(acc);flash("MIDI OK · NO SYSEX","Read/sync disabled");
-    }).catch(()=>{statusTxt.textContent='MIDI denied';flash("MIDI DENIED","permission blocked");});
+      settled(true);sysexOK=false;onAcc(acc);flash("MIDI OK · NO SYSEX","Read/sync disabled");
+    }).catch(()=>{settled(false);statusTxt.textContent='MIDI denied';flash("MIDI DENIED","permission blocked");});
   });
 }
 function padWidthFor(id){const p=P[id];if(p._padW!=null)return p._padW;   // widest display the param can ever show -> stable column
