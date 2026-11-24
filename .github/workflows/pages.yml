@@ -1,14 +1,27 @@
-# Builds dist/ with build.js and publishes it to GitHub Pages on every push to main.
+# Builds the site with build.js and publishes it to GitHub Pages.
 # One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+#
+#   /            main (the released build)
+#   /test/       the most recently updated open pull request's build, for trying on hardware before merging
+#   /test/pr-N/  each open pull request's build
+#   /test/list.html  which builds are up, with links
+#
+# It runs on every push to main and whenever a pull request is opened, pushed to, reopened or closed, and
+# rebuilds everything each time, so a closed pull request's build drops off. pull_request_target runs this
+# file as it is on main (that is what lets it deploy), so only pull requests from this repository are built,
+# never forks.
 name: Build and deploy to Pages
 on:
   push:
     branches: [main]
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 permissions:
   contents: read
   pages: write
   id-token: write
+  pull-requests: read
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -17,10 +30,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: node build.js
+      - name: Build open pull requests into dist/test/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/test
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 50 \
+            --json number,title,headRefName,isCrossRepository,updatedAt \
+            --jq 'map(select(.isCrossRepository | not)) | sort_by(.updatedAt) | reverse')
+          esc() { jq -rn --arg s "$1" '$s | @html'; }
+          rows=""; latest=""
+          for n in $(jq -r '.[].number' <<<"$prs"); do
+            title=$(jq -r ".[] | select(.number == $n) | .title" <<<"$prs")
+            branch=$(jq -r ".[] | select(.number == $n) | .headRefName" <<<"$prs")
+            wt="$RUNNER_TEMP/pr-$n"
+            git fetch -q --depth 1 origin "pull/$n/head:pr-$n"
+            git worktree add -q "$wt" "pr-$n"
+            if (cd "$wt" && node build.js); then
+              # mark the tab so a test build is never mistaken for the released one
+              sed -i "0,/<title>/s//<title>TEST #$n · /" "$wt"/dist/*.html
+              mkdir -p "dist/test/pr-$n"
+              cp -r "$wt"/dist/. "dist/test/pr-$n/"
+              [ -z "$latest" ] && latest=$n
+              rows+="<li><a href=\"pr-$n/\">#$n</a> $(esc "$title") <small>($(esc "$branch"))</small></li>"
+            else
+              echo "::warning::PR #$n did not build, left out of /test"
+              rows+="<li>#$n $(esc "$title") <small>(did not build)</small></li>"
+            fi
+          done
+          if [ -n "$latest" ]; then
+            cp -r "dist/test/pr-$latest"/. dist/test/
+            note="<p><a href=\"./\">/test/</a> is #$latest, the most recently updated.</p>"
+          else
+            note="<p>No open pull request right now. <a href=\"../\">Released build</a>.</p>"
+            echo "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=\"0; url=list.html\">" > dist/test/index.html
+          fi
+          cat > dist/test/list.html <<EOF
+          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Bad MOPHO test builds</title>
+          <style>body{font:15px/1.5 system-ui,sans-serif;margin:2rem auto;max-width:40rem;padding:0 1rem;background:#fff;color:#111}
+          @media (prefers-color-scheme:dark){body{background:#111;color:#eee}a{color:#8cf}}small{opacity:.6}</style>
+          <h1>Test builds</h1>$note<ul>$rows</ul>
+          <p><small>Built from open pull requests. These share saved settings and patches with the released build (same site).</small></p>
+          EOF
+          ls -R dist
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

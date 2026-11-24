@@ -3,6 +3,7 @@
 Web MIDI editor and librarian for the Dave Smith Instruments Mopho synthesizer.
 
 **Use it online:** https://xc3n.github.io/BadMOPHO/
+**Test builds:** https://mopho.xc3n.net/test/ is the latest open pull request, built so it can be tried on hardware before merging ([all of them](https://mopho.xc3n.net/test/list.html)).
 **Use it offline:** download `bad-mopho.html` from the site (or build it, below) and open it in Chrome.
 
 ## Layout
@@ -12,7 +13,7 @@ bad-mopho.html     the tool
 common/            shared code: a pinned copy from XC3N/webtools (see common/PINNED.json)
 build.js           inlines includes → dist/bad-mopho.html (+ dist/index.html)
 sync-common.js     refreshes common/ from a local clone of XC3N/webtools
-.github/workflows  builds and publishes dist/ to GitHub Pages on every push to main
+.github/workflows  builds and publishes dist/ to GitHub Pages: main at /, open pull requests under /test/
 ```
 
 History before this repository (October 2026 and earlier) is in [XC3N/webtools](https://github.com/XC3N/webtools); the commits for Bad MOPHO were carried over here.
