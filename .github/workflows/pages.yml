@@ -27,6 +27,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
+    # a merged pull request also pushes to main, which runs this anyway: skip the duplicate run, which would
+    # only cancel the push run ("higher priority waiting request") and leave a red cancelled run behind
+    if: ${{ !(github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.merged) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
