@@ -813,7 +813,7 @@
 /* @include common/util.js */
 /* @include common/controls.js */
 /* @include common/theme.js */
-const APP_VERSION='0.9.208', APP_BUILD='2026-11-24';   // bump on each release; shown in header for cache checks
+const APP_VERSION='0.9.209', APP_BUILD='2026-11-24';   // bump on each release; shown in header for cache checks
 /* ---- startup trace: timestamps of each startup step plus any moment the page's main thread stopped responding.
    The monitor's Copy button puts it at the top of the copied log, so a slow start can be diagnosed from a paste.
    URL switches for narrowing a slow start down: ?nomidi skips Web MIDI entirely, ?noscan skips the automatic name scan,
@@ -1751,19 +1751,23 @@ function restoreDevices(){
    another app holds, or a driver that's slow to open) and the whole browser freezes with it; the page can't interrupt that.
    So: the attempt is recorded in prefs before the call and cleared when Chrome answers. If the last attempt never answered
    (the tab was closed while frozen) or took longer than MIDI_SLOW_MS, MIDI waits for a click instead of starting on load,
-   so the editor always opens. A fast answer re-enables the automatic start. ?midi forces it. */
+   so the editor always opens. A fast answer re-enables the automatic start. ?midi forces it.
+   No web API lists MIDI devices without that call (the permission query only says granted/prompt/denied), so the editor
+   only starts MIDI on load when a port was chosen on an earlier visit; otherwise it waits for a click. */
 const MIDI_SLOW_MS=4000;
 let midiStarting=false, midiTick=null;
 function midiStartIsRisky(){
   if(FORCE_MIDI) return '';
+  if(!prefs.outName && !prefs.inName && !prefs.ctrlName) return 'no MIDI ports chosen yet';
   if(prefs.midiPending) return 'last start never finished';
   if(prefs.midiStartMs>MIDI_SLOW_MS) return 'last start took '+(prefs.midiStartMs/1000).toFixed(1)+' s';
   return '';
 }
 function offerMidiStart(why){
-  statusTxt.textContent='MIDI paused · click to connect'; statusTxt.classList.add('clickable');
-  statusTxt.title='Web MIDI did not start automatically ('+why+'). Click to connect. If Chrome freezes, close other MIDI apps (DAW, MIDI-OX, other editors) and replug the interface first.';
-  flash("MIDI PAUSED",why.slice(0,22)); bootMark('MIDI auto-start skipped · '+why);
+  const first=why==='no MIDI ports chosen yet';
+  statusTxt.textContent=(first?'MIDI off':'MIDI paused')+' · click to connect'; statusTxt.classList.add('clickable');
+  statusTxt.title=(first?'Web MIDI starts when you click here, and on load once you have picked a port.':'Web MIDI did not start automatically ('+why+'). Click to connect.')+' If Chrome freezes, close other MIDI apps (DAW, MIDI-OX, other editors) and replug the interface first.';
+  if(!first) flash("MIDI PAUSED",why.slice(0,22)); bootMark('MIDI auto-start skipped · '+why);
 }
 statusTxt.addEventListener('click',()=>{ if(!midiAccess && !midiStarting && !NO_MIDI) initMIDI(true); });
 function initMIDI(manual){
